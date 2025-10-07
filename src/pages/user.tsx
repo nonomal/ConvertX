@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { Html } from "@elysiajs/html";
 import { jwt } from "@elysiajs/jwt";
 import { Elysia, t } from "elysia";
 import { BaseHtml } from "../components/base";
@@ -32,26 +31,34 @@ export const userService = new Elysia({ name: "user/service" })
       email: t.String(),
       password: t.String(),
     }),
+    session: t.Cookie({
+      auth: t.String(),
+      jobId: t.Optional(t.String()),
+    }),
+    optionalSession: t.Cookie({
+      auth: t.Optional(t.String()),
+      jobId: t.Optional(t.String()),
+    }),
   })
-  .macro({
-    isSignIn(enabled: boolean) {
-      if (!enabled) return;
-
+  .macro("auth", {
+    cookie: "session",
+    async resolve({ status, jwt, cookie: { auth } }) {
+      if (!auth.value) {
+        return status(401, {
+          success: false,
+          message: "Unauthorized",
+        });
+      }
+      const user = await jwt.verify(auth.value);
+      if (!user) {
+        return status(401, {
+          success: false,
+          message: "Unauthorized",
+        });
+      }
       return {
-        async beforeHandle({ status, jwt, cookie: { auth } }) {
-          if (auth?.value) {
-            const user = await jwt.verify(auth.value);
-            return {
-              success: true,
-              user,
-            };
-          }
-
-          return status(401, {
-            success: false,
-            message: "Unauthorized",
-          });
-        },
+        success: true,
+        user,
       };
     },
   });
@@ -228,82 +235,86 @@ export const user = new Elysia()
     },
     { body: "signIn" },
   )
-  .get("/login", async ({ jwt, redirect, cookie: { auth } }) => {
-    if (FIRST_RUN) {
-      return redirect(`${WEBROOT}/setup`, 302);
-    }
-
-    // if already logged in, redirect to home
-    if (auth?.value) {
-      const user = await jwt.verify(auth.value);
-
-      if (user) {
-        return redirect(`${WEBROOT}/`, 302);
+  .get(
+    "/login",
+    async ({ jwt, redirect, cookie: { auth } }) => {
+      if (FIRST_RUN) {
+        return redirect(`${WEBROOT}/setup`, 302);
       }
 
-      auth.remove();
-    }
+      // if already logged in, redirect to home
+      if (auth?.value) {
+        const user = await jwt.verify(auth.value);
 
-    return (
-      <BaseHtml webroot={WEBROOT} title="ConvertX | Login">
-        <>
-          <Header
-            webroot={WEBROOT}
-            accountRegistration={ACCOUNT_REGISTRATION}
-            allowUnauthenticated={ALLOW_UNAUTHENTICATED}
-            hideHistory={HIDE_HISTORY}
-          />
-          <main
-            class={`
-              w-full flex-1 px-2
-              sm:px-4
-            `}
-          >
-            <article class="article">
-              <form method="post" class="flex flex-col gap-4">
-                <fieldset class="mb-4 flex flex-col gap-4">
-                  <label class="flex flex-col gap-1">
-                    Email
-                    <input
-                      type="email"
-                      name="email"
-                      class="rounded-sm bg-neutral-800 p-3"
-                      placeholder="Email"
-                      autocomplete="email"
-                      required
-                    />
-                  </label>
-                  <label class="flex flex-col gap-1">
-                    Password
-                    <input
-                      type="password"
-                      name="password"
-                      class="rounded-sm bg-neutral-800 p-3"
-                      placeholder="Password"
-                      autocomplete="current-password"
-                      required
-                    />
-                  </label>
-                </fieldset>
-                <div class="flex flex-row gap-4">
-                  {ACCOUNT_REGISTRATION ? (
-                    <a
-                      href={`${WEBROOT}/register`}
-                      role="button"
-                      class="w-full btn-secondary text-center"
-                    >
-                      Register
-                    </a>
-                  ) : null}
-                  <input type="submit" value="Login" class="w-full btn-primary" />
-                </div>
-              </form>
-            </article>
-          </main>
-        </>
-      </BaseHtml>
-    );
-  })
+        if (user) {
+          return redirect(`${WEBROOT}/`, 302);
+        }
+
+        auth.remove();
+      }
+
+      return (
+        <BaseHtml webroot={WEBROOT} title="ConvertX | Login">
+          <>
+            <Header
+              webroot={WEBROOT}
+              accountRegistration={ACCOUNT_REGISTRATION}
+              allowUnauthenticated={ALLOW_UNAUTHENTICATED}
+              hideHistory={HIDE_HISTORY}
+            />
+            <main
+              class={`
+                w-full flex-1 px-2
+                sm:px-4
+              `}
+            >
+              <article class="article">
+                <form method="post" class="flex flex-col gap-4">
+                  <fieldset class="mb-4 flex flex-col gap-4">
+                    <label class="flex flex-col gap-1">
+                      Email
+                      <input
+                        type="email"
+                        name="email"
+                        class="rounded-sm bg-neutral-800 p-3"
+                        placeholder="Email"
+                        autocomplete="email"
+                        required
+                      />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      Password
+                      <input
+                        type="password"
+                        name="password"
+                        class="rounded-sm bg-neutral-800 p-3"
+                        placeholder="Password"
+                        autocomplete="current-password"
+                        required
+                      />
+                    </label>
+                  </fieldset>
+                  <div class="flex flex-row gap-4">
+                    {ACCOUNT_REGISTRATION ? (
+                      <a
+                        href={`${WEBROOT}/register`}
+                        role="button"
+                        class="w-full btn-secondary text-center"
+                      >
+                        Register
+                      </a>
+                    ) : null}
+                    <input type="submit" value="Login" class="w-full btn-primary" />
+                  </div>
+                </form>
+              </article>
+            </main>
+          </>
+        </BaseHtml>
+      );
+    },
+    { body: "signIn", cookie: "optionalSession" },
+  )
   .post(
     "/login",
     async function handler({ body, set, redirect, jwt, cookie: { auth } }) {
@@ -363,85 +374,86 @@ export const user = new Elysia()
 
     return redirect(`${WEBROOT}/login`, 302);
   })
-  .get("/account", async ({ jwt, redirect, cookie: { auth } }) => {
-    if (!auth?.value) {
-      return redirect(`${WEBROOT}/`);
-    }
-    const user = await jwt.verify(auth.value);
+  .get(
+    "/account",
+    async ({ user, redirect }) => {
+      if (!user) {
+        return redirect(`${WEBROOT}/`, 302);
+      }
 
-    if (!user) {
-      return redirect(`${WEBROOT}/`, 302);
-    }
+      const userData = db.query("SELECT * FROM users WHERE id = ?").as(User).get(user.id);
 
-    const userData = db.query("SELECT * FROM users WHERE id = ?").as(User).get(user.id);
+      if (!userData) {
+        return redirect(`${WEBROOT}/`, 302);
+      }
 
-    if (!userData) {
-      return redirect(`${WEBROOT}/`, 302);
-    }
-
-    return (
-      <BaseHtml webroot={WEBROOT} title="ConvertX | Account">
-        <>
-          <Header
-            webroot={WEBROOT}
-            accountRegistration={ACCOUNT_REGISTRATION}
-            allowUnauthenticated={ALLOW_UNAUTHENTICATED}
-            hideHistory={HIDE_HISTORY}
-            loggedIn
-          />
-          <main
-            class={`
-              w-full flex-1 px-2
-              sm:px-4
-            `}
-          >
-            <article class="article">
-              <form method="post" class="flex flex-col gap-4">
-                <fieldset class="mb-4 flex flex-col gap-4">
-                  <label class="flex flex-col gap-1">
-                    Email
-                    <input
-                      type="email"
-                      name="email"
-                      class="rounded-sm bg-neutral-800 p-3"
-                      placeholder="Email"
-                      autocomplete="email"
-                      value={userData.email}
-                      required
-                    />
-                  </label>
-                  <label class="flex flex-col gap-1">
-                    Password (leave blank for unchanged)
-                    <input
-                      type="password"
-                      name="newPassword"
-                      class="rounded-sm bg-neutral-800 p-3"
-                      placeholder="Password"
-                      autocomplete="new-password"
-                    />
-                  </label>
-                  <label class="flex flex-col gap-1">
-                    Current Password
-                    <input
-                      type="password"
-                      name="password"
-                      class="rounded-sm bg-neutral-800 p-3"
-                      placeholder="Password"
-                      autocomplete="current-password"
-                      required
-                    />
-                  </label>
-                </fieldset>
-                <div role="group">
-                  <input type="submit" value="Update" class="w-full btn-primary" />
-                </div>
-              </form>
-            </article>
-          </main>
-        </>
-      </BaseHtml>
-    );
-  })
+      return (
+        <BaseHtml webroot={WEBROOT} title="ConvertX | Account">
+          <>
+            <Header
+              webroot={WEBROOT}
+              accountRegistration={ACCOUNT_REGISTRATION}
+              allowUnauthenticated={ALLOW_UNAUTHENTICATED}
+              hideHistory={HIDE_HISTORY}
+              loggedIn
+            />
+            <main
+              class={`
+                w-full flex-1 px-2
+                sm:px-4
+              `}
+            >
+              <article class="article">
+                <form method="post" class="flex flex-col gap-4">
+                  <fieldset class="mb-4 flex flex-col gap-4">
+                    <label class="flex flex-col gap-1">
+                      Email
+                      <input
+                        type="email"
+                        name="email"
+                        class="rounded-sm bg-neutral-800 p-3"
+                        placeholder="Email"
+                        autocomplete="email"
+                        value={userData.email}
+                        required
+                      />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      Password (leave blank for unchanged)
+                      <input
+                        type="password"
+                        name="newPassword"
+                        class="rounded-sm bg-neutral-800 p-3"
+                        placeholder="Password"
+                        autocomplete="new-password"
+                      />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      Current Password
+                      <input
+                        type="password"
+                        name="password"
+                        class="rounded-sm bg-neutral-800 p-3"
+                        placeholder="Password"
+                        autocomplete="current-password"
+                        required
+                      />
+                    </label>
+                  </fieldset>
+                  <div role="group">
+                    <input type="submit" value="Update" class="w-full btn-primary" />
+                  </div>
+                </form>
+              </article>
+            </main>
+          </>
+        </BaseHtml>
+      );
+    },
+    {
+      auth: true,
+    },
+  )
   .post(
     "/account",
     async function handler({ body, set, redirect, jwt, cookie: { auth } }) {
@@ -505,5 +517,6 @@ export const user = new Elysia()
         newPassword: t.MaybeEmpty(t.String()),
         password: t.String(),
       }),
+      cookie: "session",
     },
   );
